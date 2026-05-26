@@ -80,7 +80,7 @@ export class LobbyScene extends Phaser.Scene {
       const warmTimer = setTimeout(() => { warmedQuickly = false; }, 2500);
       await warmUp((sec) => {
         if (!warmedQuickly) {
-          status.setText(`サーバー起動中... (${Math.floor(sec)}秒 / 最大60秒)`);
+          status.setText(`サーバー起動中... (${Math.floor(sec)}秒 / 最大90秒)`);
         }
       });
       clearTimeout(warmTimer);

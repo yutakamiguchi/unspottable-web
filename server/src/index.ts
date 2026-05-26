@@ -7,7 +7,11 @@ import { GameRoom } from "./rooms/GameRoom";
 
 const port = Number(process.env.PORT) || 2567;
 const app = express();
-app.get("/health", (_req, res) => res.json({ ok: true }));
+// /health はクライアントのウォームアップから直接叩かれるので CORS を許可
+app.get("/health", (_req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.json({ ok: true });
+});
 
 const httpServer = createServer(app);
 const gameServer = new Server({
