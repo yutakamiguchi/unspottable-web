@@ -73,7 +73,7 @@ export class GameScene extends Phaser.Scene {
 
     // 障害物
     const state: any = this.room.state;
-    state.obstacles.forEach((o: any) => this.drawObstacle(o));
+    state.obstacles?.forEach((o: any) => this.drawObstacle(o));
 
     // ワールドレイヤー（depth sort用）
     this.worldLayer = this.add.layer();
@@ -469,7 +469,7 @@ export class GameScene extends Phaser.Scene {
   private onPhaseChanged() {
     const state: any = this.room.state;
     const phase = state.phase;
-    state.entities.forEach((entity: any, id: string) => this.updateLabelForPhase(id, entity));
+    state.entities?.forEach((entity: any, id: string) => this.updateLabelForPhase(id, entity));
 
     if (phase === "lobby") {
       this.phaseText.setText("LOBBY — 「準備 OK」で開始");

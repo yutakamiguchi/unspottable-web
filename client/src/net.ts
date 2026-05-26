@@ -32,18 +32,35 @@ export async function warmUp(onProgress?: (sec: number) => void): Promise<void> 
 
 export async function joinPublic(name: string): Promise<JoinResult> {
   const room = await client.joinOrCreate("game", { name, code: "" });
+  await waitForInitialState(room);
   return { room };
 }
 
 export async function createPrivate(name: string): Promise<JoinResult> {
   const code = generateCode();
   const room = await client.create("game", { name, code });
+  await waitForInitialState(room);
   return { room };
 }
 
 export async function joinByCode(name: string, code: string): Promise<JoinResult> {
   const room = await client.join("game", { name, code });
+  await waitForInitialState(room);
   return { room };
+}
+
+function waitForInitialState(room: Room): Promise<void> {
+  return new Promise((resolve) => {
+    const ready = () => {
+      const s: any = room.state;
+      return !!s && s.obstacles !== undefined && s.entities !== undefined && s.players !== undefined;
+    };
+    if (ready()) { resolve(); return; }
+    const interval = setInterval(() => {
+      if (ready()) { clearInterval(interval); resolve(); }
+    }, 50);
+    setTimeout(() => { clearInterval(interval); resolve(); }, 8000);
+  });
 }
 
 function generateCode(): string {
