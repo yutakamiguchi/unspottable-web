@@ -141,7 +141,8 @@ export class GameScene extends Phaser.Scene {
     $(state).entities.onAdd((entity: any, id: string) => {
       this.addEntityView(id, entity);
       $(entity).listen("attackUntil", (val: number) => {
-        if (val > Date.now()) this.showAttackFx(id, entity);
+        // 攻撃エフェクトは自分の駒だけ表示（他人の攻撃が見えると正体がバレるため）
+        if (id === this.myId && val > Date.now()) this.showAttackFx(id, entity);
       });
       $(entity).listen("stunned", (val: boolean) => {
         if (val) this.flashHit(id);
