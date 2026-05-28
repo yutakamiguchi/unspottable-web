@@ -257,8 +257,9 @@ export class GameScene extends Phaser.Scene {
   }
 
   private addEntityView(id: string, entity: any) {
-    const color = COLORS[entity.colorIndex % COLORS.length];
-    const skin = SKIN_TONES[Math.floor((entity.colorIndex * 7919 + id.charCodeAt(id.length - 1)) % SKIN_TONES.length)];
+    // 全キャラを同じ見た目に統一（本家のように群衆へ完全に溶け込ませる）
+    const color = COLORS[0];
+    const skin = SKIN_TONES[0];
 
     const container = this.add.container(entity.x, entity.y);
     // 影
