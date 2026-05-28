@@ -3,6 +3,12 @@ import { getStateCallbacks, type Room } from "colyseus.js";
 import { COLORS, SKIN_TONES } from "../colors";
 import { sfxHitPlayer, sfxHitNpc, sfxScore, sfxFootstep, sfxRoundStart, sfxRoundEnd } from "../sfx";
 
+// サーバー(GameRoom)と一致させる移動パラメータ。クライアント予測で使用。
+const PLAYER_SPEED = 140;
+const ENTITY_RADIUS = 14;
+
+interface ObstacleRect { x: number; y: number; w: number; h: number; }
+
 interface EntityView {
   container: Phaser.GameObjects.Container;
   shadow: Phaser.GameObjects.Ellipse;
@@ -43,6 +49,9 @@ export class GameScene extends Phaser.Scene {
   };
   private lastInputSent = { up: false, down: false, left: false, right: false };
   private lastMyScore = 0;
+  private obstacleRects: ObstacleRect[] = [];
+  private predictReady = false;
+  private graveViews = new Map<any, Phaser.GameObjects.Container>();
 
   constructor() { super("Game"); }
 
@@ -72,7 +81,10 @@ export class GameScene extends Phaser.Scene {
 
     // 障害物
     const state: any = this.room.state;
-    state.obstacles?.forEach((o: any) => this.drawObstacle(o));
+    state.obstacles?.forEach((o: any) => {
+      this.drawObstacle(o);
+      this.obstacleRects.push({ x: o.x, y: o.y, w: o.w, h: o.h });
+    });
 
     // ワールドレイヤー（depth sort用）
     this.worldLayer = this.add.layer();
@@ -151,6 +163,9 @@ export class GameScene extends Phaser.Scene {
     });
     $(state).entities.onRemove((_e: any, id: string) => this.removeEntityView(id));
 
+    $(state).graves.onAdd((g: any) => this.addGrave(g));
+    $(state).graves.onRemove((g: any) => this.removeGrave(g));
+
     $(state).players.onAdd((p: any, id: string) => {
       this.refreshScoreboard();
       $(p).listen("score", (newVal: number, oldVal: number | undefined) => {
@@ -187,14 +202,25 @@ export class GameScene extends Phaser.Scene {
     state.entities.forEach((entity: any, id: string) => {
       const v = this.views.get(id);
       if (!v) return;
-      const t = 0.25;
-      const cx = Phaser.Math.Linear(v.container.x, entity.x, t);
-      const cy = Phaser.Math.Linear(v.container.y, entity.y, t);
+
+      let cx: number, cy: number;
+      if (id === this.myId && state.phase === "playing" && !entity.stunned) {
+        // 自分のキャラはローカル予測で即時移動（入力遅延を消す）
+        ({ x: cx, y: cy } = this.predictSelf(v, entity, dtMs, up, down, left, right));
+      } else {
+        // 他キャラ＆スタン中はサーバー位置へ補間
+        const t = (id === this.myId) ? 0.4 : 0.25;
+        cx = Phaser.Math.Linear(v.container.x, entity.x, t);
+        cy = Phaser.Math.Linear(v.container.y, entity.y, t);
+      }
       v.container.setPosition(cx, cy);
       v.container.setDepth(cy); // y-sort
 
-      // 歩行アニメ
-      const moving = Math.hypot(entity.vx, entity.vy) > 5 && !entity.stunned;
+      // 歩行アニメ（自分は予測入力ベース、他者はサーバー速度ベース）
+      const selfMoving = (up || down || left || right);
+      const moving = (id === this.myId && state.phase === "playing" && !entity.stunned)
+        ? selfMoving
+        : (Math.hypot(entity.vx, entity.vy) > 5 && !entity.stunned);
       if (moving) v.walkPhase += dtMs * 0.015;
       const sin = Math.sin(v.walkPhase);
       const bob = moving ? sin * 1.8 : 0;
@@ -239,6 +265,86 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.refreshScoreboard();
+  }
+
+  // --- クライアント予測 ---
+
+  private predictSelf(
+    v: EntityView, entity: any, dtMs: number,
+    up: boolean, down: boolean, left: boolean, right: boolean,
+  ): { x: number; y: number } {
+    const dt = Math.min(dtMs, 50) / 1000; // 大きなフレーム飛びを抑制
+    let px = v.container.x;
+    let py = v.container.y;
+
+    // サーバー初回位置への同期（予測開始時に一度合わせる）
+    if (!this.predictReady) {
+      this.predictReady = true;
+      px = entity.x; py = entity.y;
+    }
+
+    let dx = 0, dy = 0;
+    if (up) dy -= 1;
+    if (down) dy += 1;
+    if (left) dx -= 1;
+    if (right) dx += 1;
+    const len = Math.hypot(dx, dy);
+    if (len > 0) { dx /= len; dy /= len; }
+
+    const mapW = this.room.state ? (this.room.state as any).mapWidth : 1280;
+    const mapH = this.room.state ? (this.room.state as any).mapHeight : 720;
+
+    let nx = px + dx * PLAYER_SPEED * dt;
+    let ny = py + dy * PLAYER_SPEED * dt;
+    // サーバーと同じ軸別衝突解決
+    if (this.collidesObstacle(nx, py, ENTITY_RADIUS)) nx = px;
+    if (this.collidesObstacle(nx, ny, ENTITY_RADIUS)) ny = py;
+    nx = Phaser.Math.Clamp(nx, ENTITY_RADIUS, mapW - ENTITY_RADIUS);
+    ny = Phaser.Math.Clamp(ny, ENTITY_RADIUS, mapH - ENTITY_RADIUS);
+
+    // サーバー確定位置へのゆるい補正（ズレが大きければ強めに寄せる）
+    const drift = Math.hypot(entity.x - nx, entity.y - ny);
+    const corr = drift > 50 ? 0.3 : 0.04;
+    nx = Phaser.Math.Linear(nx, entity.x, corr);
+    ny = Phaser.Math.Linear(ny, entity.y, corr);
+
+    return { x: nx, y: ny };
+  }
+
+  private collidesObstacle(x: number, y: number, r: number): boolean {
+    for (const o of this.obstacleRects) {
+      const cx = Math.max(o.x, Math.min(x, o.x + o.w));
+      const cy = Math.max(o.y, Math.min(y, o.y + o.h));
+      if ((x - cx) ** 2 + (y - cy) ** 2 < r * r) return true;
+    }
+    return false;
+  }
+
+  // --- 墓 ---
+
+  private addGrave(g: any) {
+    const c = this.add.container(g.x, g.y).setDepth(g.y - 1);
+    // 土まんじゅう
+    const mound = this.add.ellipse(0, 8, 30, 12, 0x3c3328, 0.9);
+    // 墓石（角丸風に矩形＋頭の半円）
+    const stone = this.add.rectangle(0, -4, 16, 20, 0x9a9a9a).setStrokeStyle(2, 0x5a5a5a);
+    const stoneTop = this.add.arc(0, -14, 8, 0, 180, false, 0x9a9a9a)
+      .setStrokeStyle(2, 0x5a5a5a).setRotation(Math.PI);
+    // 十字
+    const crossV = this.add.rectangle(0, -8, 3, 10, 0x6a6a6a);
+    const crossH = this.add.rectangle(0, -11, 8, 3, 0x6a6a6a);
+    c.add([mound, stone, stoneTop, crossV, crossH]);
+    this.worldLayer.add(c);
+    this.graveViews.set(g, c);
+
+    // 出現演出: ポンと跳ねる
+    c.setScale(0.2);
+    this.tweens.add({ targets: c, scale: 1, duration: 260, ease: "Back.easeOut" });
+  }
+
+  private removeGrave(g: any) {
+    const c = this.graveViews.get(g);
+    if (c) { c.destroy(); this.graveViews.delete(g); }
   }
 
   // --- 描画 ---
@@ -469,6 +575,7 @@ export class GameScene extends Phaser.Scene {
       this.readyButton.setVisible(false);
       sfxRoundStart();
       this.lastMyScore = 0;
+      this.predictReady = false; // ラウンド開始位置に再同期
     } else if (phase === "ended") {
       sfxRoundEnd();
       const players = Array.from(state.players.values()) as any[];

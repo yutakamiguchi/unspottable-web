@@ -8,6 +8,11 @@ export class Obstacle extends Schema {
   @type("string") kind: string = "pillar"; // pillar | bench | crate
 }
 
+export class Grave extends Schema {
+  @type("number") x: number = 0;
+  @type("number") y: number = 0;
+}
+
 export class Entity extends Schema {
   @type("string") id!: string;
   @type("number") x: number = 0;
@@ -33,6 +38,7 @@ export class GameState extends Schema {
   @type({ map: Entity }) entities = new MapSchema<Entity>();
   @type({ map: Player }) players = new MapSchema<Player>();
   @type([Obstacle]) obstacles = new ArraySchema<Obstacle>();
+  @type([Grave]) graves = new ArraySchema<Grave>();
   @type("string") phase: string = "lobby"; // lobby | playing | ended
   @type("number") timeLeft: number = 0;
   @type("number") roundDuration: number = 90;

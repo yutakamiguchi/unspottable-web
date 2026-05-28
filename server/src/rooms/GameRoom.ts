@@ -1,5 +1,5 @@
 import { Room, Client } from "colyseus";
-import { GameState, Player, Entity, Obstacle } from "../schema/GameState";
+import { GameState, Player, Entity, Obstacle, Grave } from "../schema/GameState";
 
 const NPC_COUNT = 40;
 const PLAYER_SPEED = 140;
@@ -145,6 +145,12 @@ export class GameRoom extends Room<GameState> {
   }
 
   private spawnNpcs() {
+    // 既存NPCを一掃してから再生成（ラウンド間で倒されたNPCを補充）
+    const existing: string[] = [];
+    this.state.entities.forEach((e, id) => { if (!e.isPlayer) existing.push(id); });
+    for (const id of existing) this.state.entities.delete(id);
+    this.npcAI.clear();
+
     const ids: string[] = [];
     for (let i = 0; i < NPC_COUNT; i++) {
       const id = `npc_${i}`;
@@ -204,8 +210,14 @@ export class GameRoom extends Room<GameState> {
     this.state.timeLeft = this.state.roundDuration;
     this.roundEndsAt = Date.now() + this.state.roundDuration * 1000;
     this.state.players.forEach(p => { p.score = 0; });
+    // 前ラウンドの墓を消去し、NPCを満タンまで再生成
+    this.state.graves.clear();
+    this.spawnNpcs();
+    // プレイヤーは色再ランダム＆再配置（NPCは spawnNpcs 内で配置済み）
     this.state.entities.forEach(e => {
+      if (!e.isPlayer) return;
       e.colorIndex = Math.floor(Math.random() * NUM_COLORS);
+      e.stunned = false;
       this.placeEntityRandomly(e);
     });
   }
@@ -408,14 +420,19 @@ export class GameRoom extends Room<GameState> {
         until: now + KNOCKBACK_MS,
       });
     } else {
+      // NPCを倒した: 減点 + 自分が硬直 + その場に墓を設置してNPCは消滅
       attackerPlayer.score = Math.max(0, attackerPlayer.score - 1);
       attacker.stunned = true;
       attacker.stunUntil = now + 500;
-      // NPCも軽くよろける
-      this.knockback.set(bestId!, {
-        vx: kdx * KNOCKBACK_SPEED * 0.6, vy: kdy * KNOCKBACK_SPEED * 0.6,
-        until: now + KNOCKBACK_MS,
-      });
+
+      const grave = new Grave();
+      grave.x = target.x;
+      grave.y = target.y;
+      this.state.graves.push(grave);
+
+      this.state.entities.delete(bestId!);
+      this.npcAI.delete(bestId!);
+      this.knockback.delete(bestId!);
     }
   }
 }
