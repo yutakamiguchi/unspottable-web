@@ -17,7 +17,6 @@ interface EntityView {
   punching: boolean;
   nameLabel?: Phaser.GameObjects.Text;
   attackFx?: Phaser.GameObjects.Arc;
-  selfHint?: Phaser.GameObjects.Arc;
   hitFlash?: Phaser.Tweens.Tween;
   walkPhase: number;
   lastFootstepPhase: number;
@@ -225,7 +224,6 @@ export class GameScene extends Phaser.Scene {
       v.container.setAlpha(entity.stunned ? 0.45 : 1);
 
       if (v.nameLabel) v.nameLabel.setPosition(cx, cy - 38);
-      if (v.selfHint) v.selfHint.setPosition(cx, cy);
     });
 
     const phase = state.phase;
@@ -314,20 +312,6 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private flashSelfHint() {
-    const v = this.views.get(this.myId);
-    if (!v) return;
-    v.selfHint?.destroy();
-    const ring = this.add.arc(v.container.x, v.container.y, 24, 0, 360, false, 0xffe066, 0)
-      .setStrokeStyle(3, 0xffe066).setDepth(5000);
-    v.selfHint = ring;
-    this.tweens.add({
-      targets: ring, alpha: { from: 1, to: 0 }, scale: { from: 1, to: 2.2 },
-      duration: 2200,
-      onComplete: () => { ring.destroy(); if (v.selfHint === ring) v.selfHint = undefined; },
-    });
-  }
-
   private flashHit(id: string) {
     const v = this.views.get(id);
     if (!v) return;
@@ -410,7 +394,6 @@ export class GameScene extends Phaser.Scene {
     v.container.destroy();
     v.nameLabel?.destroy();
     v.attackFx?.destroy();
-    v.selfHint?.destroy();
     this.views.delete(id);
   }
 
@@ -479,12 +462,11 @@ export class GameScene extends Phaser.Scene {
       this.phaseText.setText("LOBBY — 「準備 OK」で開始");
       this.readyButton.setVisible(true).setInteractive({ useHandCursor: true }).setText("[ 準備 OK ]");
     } else if (phase === "playing") {
-      this.phaseText.setText("自分の位置を確認！");
-      this.time.delayedCall(2000, () => {
+      this.phaseText.setText("START!");
+      this.time.delayedCall(1200, () => {
         if ((this.room.state as any).phase === "playing") this.phaseText.setText("");
       });
       this.readyButton.setVisible(false);
-      this.flashSelfHint();
       sfxRoundStart();
       this.lastMyScore = 0;
     } else if (phase === "ended") {
