@@ -6,7 +6,7 @@ import { ensureCharTexture, CHAR_TEX } from "../character";
 // サーバー(GameRoom)と一致させる移動パラメータ。クライアント予測で使用。
 const PLAYER_SPEED = 140;
 const ENTITY_RADIUS = 14;
-const CHAR_SCALE = 2; // 16px → 32px
+const CHAR_SCALE = 1; // 32px テクスチャをそのまま表示
 
 interface ObstacleRect { x: number; y: number; w: number; h: number; }
 
@@ -367,13 +367,13 @@ export class GameScene extends Phaser.Scene {
 
   private addEntityView(id: string, entity: any) {
     const container = this.add.container(entity.x, entity.y);
-    // 影
-    const shadow = this.add.ellipse(0, 14, 24, 8, 0x000000, 0.4);
-    // ドット絵スプライト（足元が原点付近に来るよう origin を下げる）
+    // ドット絵スプライト（足元＝靴の下端がコンテナ原点に来るよう origin を下げる）
     const sprite = this.add.sprite(0, 0, CHAR_TEX, 0)
-      .setOrigin(0.5, 0.78)
+      .setOrigin(0.5, 0.9)
       .setScale(CHAR_SCALE);
     sprite.play("char_idle");
+    // 影（足元＝原点の真下にぴったり敷く）
+    const shadow = this.add.ellipse(0, 0, 22, 7, 0x000000, 0.4);
 
     container.add([shadow, sprite]);
     this.worldLayer.add(container);
