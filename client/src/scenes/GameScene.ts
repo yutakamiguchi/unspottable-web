@@ -1,32 +1,24 @@
 import Phaser from "phaser";
 import { getStateCallbacks, type Room } from "colyseus.js";
-import { COLORS, SKIN_TONES } from "../colors";
 import { sfxHitPlayer, sfxHitNpc, sfxScore, sfxFootstep, sfxRoundStart, sfxRoundEnd } from "../sfx";
+import { ensureCharTexture, CHAR_TEX } from "../character";
 
 // サーバー(GameRoom)と一致させる移動パラメータ。クライアント予測で使用。
 const PLAYER_SPEED = 140;
 const ENTITY_RADIUS = 14;
+const CHAR_SCALE = 2; // 16px → 32px
 
 interface ObstacleRect { x: number; y: number; w: number; h: number; }
 
 interface EntityView {
   container: Phaser.GameObjects.Container;
   shadow: Phaser.GameObjects.Ellipse;
-  body: Phaser.GameObjects.Ellipse;
-  head: Phaser.GameObjects.Arc;
-  legL: Phaser.GameObjects.Rectangle;
-  legR: Phaser.GameObjects.Rectangle;
-  armL: Phaser.GameObjects.Rectangle;
-  armR: Phaser.GameObjects.Rectangle;
-  fist: Phaser.GameObjects.Arc;
-  fistTween?: Phaser.Tweens.Tween;
-  punching: boolean;
+  sprite: Phaser.GameObjects.Sprite;
   nameLabel?: Phaser.GameObjects.Text;
   attackFx?: Phaser.GameObjects.Arc;
   hitFlash?: Phaser.Tweens.Tween;
-  walkPhase: number;
-  lastFootstepPhase: number;
-  skinTone: number;
+  lastFootstepFrame: string;
+  facing: number; // -1 左向き / 1 右向き
 }
 
 export class GameScene extends Phaser.Scene {
@@ -62,6 +54,17 @@ export class GameScene extends Phaser.Scene {
 
   create() {
     const { width, height } = this.scale;
+
+    // ドット絵キャラのテクスチャ生成 + 歩行アニメ定義
+    ensureCharTexture(this);
+    if (!this.anims.exists("char_walk")) {
+      this.anims.create({
+        key: "char_walk",
+        frames: [{ key: CHAR_TEX, frame: 1 }, { key: CHAR_TEX, frame: 2 }],
+        frameRate: 8, repeat: -1,
+      });
+      this.anims.create({ key: "char_idle", frames: [{ key: CHAR_TEX, frame: 0 }] });
+    }
 
     // --- マップ床 ---
     this.add.rectangle(width / 2, height / 2, width, height, 0x4a5566);
@@ -217,34 +220,33 @@ export class GameScene extends Phaser.Scene {
       v.container.setDepth(cy); // y-sort
 
       // 歩行アニメ（自分は予測入力ベース、他者はサーバー速度ベース）
-      const selfMoving = (up || down || left || right);
-      const moving = (id === this.myId && state.phase === "playing" && !entity.stunned)
-        ? selfMoving
-        : (Math.hypot(entity.vx, entity.vy) > 5 && !entity.stunned);
-      if (moving) v.walkPhase += dtMs * 0.015;
-      const sin = Math.sin(v.walkPhase);
-      const bob = moving ? sin * 1.8 : 0;
-      v.body.setY(0 + bob * 0.3);
-      v.head.setPosition(Math.cos(entity.dir) * 5, -16 + bob * 0.6);
-      // 足・腕の交互スイング
-      if (moving) {
-        v.legL.setY(10 + sin * 2);
-        v.legR.setY(10 - sin * 2);
-        v.armL.setY(-2 - sin * 2);
-        v.armR.setY(-2 + sin * 2);
+      let vxForFacing: number;
+      let moving: boolean;
+      if (id === this.myId && state.phase === "playing" && !entity.stunned) {
+        moving = (up || down || left || right);
+        vxForFacing = (right ? 1 : 0) - (left ? 1 : 0);
       } else {
-        v.legL.setY(10); v.legR.setY(10);
-        v.armL.setY(-2); v.armR.setY(-2);
+        moving = Math.hypot(entity.vx, entity.vy) > 5 && !entity.stunned;
+        vxForFacing = entity.vx;
       }
 
-      // 足音（自キャラのみ、踏み込み位相で再生）
+      // 歩行/待機アニメの切替
+      const wantAnim = moving ? "char_walk" : "char_idle";
+      if (v.sprite.anims.currentAnim?.key !== wantAnim) v.sprite.play(wantAnim, true);
+
+      // 左右の向き（横移動があるときだけ更新）
+      if (Math.abs(vxForFacing) > 0.1) {
+        v.facing = vxForFacing < 0 ? -1 : 1;
+        v.sprite.setFlipX(v.facing < 0);
+      }
+
+      // 足音（自キャラのみ、歩行フレームの切替に同期）
       if (moving && id === this.myId) {
-        const phaseMod = ((v.walkPhase % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
-        const crossed =
-          (v.lastFootstepPhase < Math.PI && phaseMod >= Math.PI) ||
-          (v.lastFootstepPhase > phaseMod);
-        if (crossed) sfxFootstep();
-        v.lastFootstepPhase = phaseMod;
+        const frameName = String(v.sprite.anims.currentFrame?.textureFrame ?? "");
+        if (frameName !== v.lastFootstepFrame) {
+          sfxFootstep();
+          v.lastFootstepFrame = frameName;
+        }
       }
 
       v.container.setAlpha(entity.stunned ? 0.45 : 1);
@@ -364,37 +366,22 @@ export class GameScene extends Phaser.Scene {
   }
 
   private addEntityView(id: string, entity: any) {
-    // 全キャラを同じ見た目に統一（本家のように群衆へ完全に溶け込ませる）
-    const color = COLORS[0];
-    const skin = SKIN_TONES[0];
-
     const container = this.add.container(entity.x, entity.y);
     // 影
-    const shadow = this.add.ellipse(0, 10, 26, 9, 0x000000, 0.4);
-    // 足（描画順は body より下、head より下になるよう先に追加）
-    const legL = this.add.rectangle(-5, 10, 6, 8, 0x2a2a2a);
-    const legR = this.add.rectangle(5, 10, 6, 8, 0x2a2a2a);
-    // 腕
-    const armL = this.add.rectangle(-11, -2, 5, 12, color).setStrokeStyle(1, 0x1a1a1a);
-    const armR = this.add.rectangle(11, -2, 5, 12, color).setStrokeStyle(1, 0x1a1a1a);
-    // 胴体（縦長楕円）
-    const body = this.add.ellipse(0, 0, 22, 26, color).setStrokeStyle(2, 0x1a1a1a);
-    // 頭
-    const head = this.add.arc(0, -16, 8, 0, 360, false, skin).setStrokeStyle(2, 0x1a1a1a);
-    // 拳（通常は胴体に隠れる位置、攻撃時に前へ伸びる）
-    const fist = this.add.arc(0, 0, 6, 0, 360, false, skin)
-      .setStrokeStyle(2, 0x1a1a1a)
-      .setVisible(false);
+    const shadow = this.add.ellipse(0, 14, 24, 8, 0x000000, 0.4);
+    // ドット絵スプライト（足元が原点付近に来るよう origin を下げる）
+    const sprite = this.add.sprite(0, 0, CHAR_TEX, 0)
+      .setOrigin(0.5, 0.78)
+      .setScale(CHAR_SCALE);
+    sprite.play("char_idle");
 
-    container.add([shadow, legL, legR, armL, armR, body, fist, head]);
+    container.add([shadow, sprite]);
     this.worldLayer.add(container);
 
     const view: EntityView = {
-      container, shadow, body, head, legL, legR, armL, armR, fist,
-      punching: false,
-      walkPhase: Math.random() * Math.PI * 2,
-      lastFootstepPhase: 0,
-      skinTone: skin,
+      container, shadow, sprite,
+      lastFootstepFrame: "",
+      facing: 1,
     };
     this.views.set(id, view);
     this.updateLabelForPhase(id, entity);
@@ -422,11 +409,10 @@ export class GameScene extends Phaser.Scene {
     const v = this.views.get(id);
     if (!v) return;
     v.hitFlash?.stop();
-    const originalColor = v.body.fillColor;
-    v.body.setFillStyle(0xffffff);
+    v.sprite.setTintFill(0xffffff);
     v.hitFlash = this.tweens.add({
       targets: {}, duration: 120,
-      onComplete: () => v.body.setFillStyle(originalColor),
+      onComplete: () => v.sprite.clearTint(),
     });
 
     const entity: any = (this.room.state as any).entities.get(id);
@@ -506,43 +492,16 @@ export class GameScene extends Phaser.Scene {
   private showAttackFx(id: string, entity: any) {
     const v = this.views.get(id);
     if (!v) return;
-    this.punchAnim(v, entity.dir);
-    this.spawnConeFlash(v.container.x, v.container.y, entity.dir);
-  }
-
-  private punchAnim(v: EntityView, dir: number) {
-    const REACH = 28;
-    const cx = Math.cos(dir);
-    const sy = Math.sin(dir);
-
-    v.fistTween?.stop();
-    v.fist.setVisible(true).setAlpha(1);
-    v.fist.setPosition(cx * 8, sy * 8 - 2);
-    v.punching = true;
-
-    // 引きの腕（胴体側に少し戻る）
-    const backArm = cx > 0 ? v.armL : v.armR;
-    const punchArm = cx > 0 ? v.armR : v.armL;
-    const backDefaultX = backArm.x;
-    const punchDefaultX = punchArm.x;
-    backArm.setX(backDefaultX - cx * 4);
-    punchArm.setX(punchDefaultX + cx * 6);
-
-    v.fistTween = this.tweens.add({
-      targets: v.fist,
-      x: cx * REACH,
-      y: sy * REACH - 2,
-      duration: 70,
-      ease: "Quad.easeOut",
-      yoyo: true,
-      hold: 30,
-      onComplete: () => {
-        v.fist.setVisible(false);
-        v.punching = false;
-        backArm.setX(backDefaultX);
-        punchArm.setX(punchDefaultX);
-      },
+    // スプライトを攻撃方向へ素早く突き出して戻す（パンチの溜め→突き）
+    const lunge = 8;
+    this.tweens.add({
+      targets: v.sprite,
+      x: Math.cos(entity.dir) * lunge,
+      y: -Math.abs(Math.sin(entity.dir)) * 2,
+      duration: 70, ease: "Quad.easeOut", yoyo: true, hold: 30,
+      onComplete: () => v.sprite.setPosition(0, 0),
     });
+    this.spawnConeFlash(v.container.x, v.container.y, entity.dir);
   }
 
   private spawnConeFlash(x: number, y: number, dir: number) {
