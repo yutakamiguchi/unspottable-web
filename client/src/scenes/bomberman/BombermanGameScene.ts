@@ -178,9 +178,11 @@ export class BombermanGameScene extends Phaser.Scene {
       if (!v) return;
       const sx = this.offsetX + p.x;
       const sy = this.offsetY + p.y;
+      // 自分は強めに（ビタ止め感）、他者は滑らかに補間
+      const t = id === this.myId ? 0.55 : 0.35;
       v.container.setPosition(
-        Phaser.Math.Linear(v.container.x, sx, 0.35),
-        Phaser.Math.Linear(v.container.y, sy, 0.35),
+        Phaser.Math.Linear(v.container.x, sx, t),
+        Phaser.Math.Linear(v.container.y, sy, t),
       );
       v.container.setDepth(sy);
 

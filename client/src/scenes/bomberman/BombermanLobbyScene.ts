@@ -56,16 +56,54 @@ export class BombermanLobbyScene extends Phaser.Scene {
       tryJoin(this, status, () => joinRoomByCode(ROOM, this.getName(), code), "BombermanGame", cleanup);
     });
 
-    this.add.text(width / 2, height - 60,
+    this.add.text(width / 2, height - 90,
       "操作: WASD/矢印で移動、Space で爆弾設置  /  2人以上揃って「準備」で開始", {
       fontSize: "14px", color: "#888888",
     }).setOrigin(0.5);
+
+    // アイテム凡例（ブロックを壊すと出現。色はゲーム内アイコンと対応）
+    this.add.text(width / 2, height - 58, "アイテム（ブロックを壊すと出現）", {
+      fontSize: "13px", color: "#aaaaaa", fontStyle: "bold",
+    }).setOrigin(0.5);
+    this.makeItemLegend(width / 2, height - 32, [
+      { color: 0x333333, label: "爆弾＋ (同時に置ける爆弾が増える)" },
+      { color: 0xff5533, label: "火力＋ (爆風が伸びる)" },
+      { color: 0x44aaff, label: "速度＋ (移動が速くなる)" },
+    ]);
 
     this.input.once("pointerdown", () => enableSfx());
 
     this.events.once("shutdown", () => {
       this.nameInput?.remove();
       this.codeInput?.remove();
+    });
+  }
+
+  // 色つきアイコン＋説明を横並びで中央寄せに配置する。
+  private makeItemLegend(cx: number, y: number, items: { color: number; label: string }[]) {
+    const fontSize = 13;
+    const iconSize = 14;
+    const iconGap = 6;   // アイコンとラベルの間
+    const itemGap = 24;  // 項目同士の間
+
+    // 各項目の幅を測って全体幅を求め、中央寄せの開始xを決める
+    const widths = items.map(it => {
+      const t = this.add.text(0, 0, it.label, { fontSize: `${fontSize}px` }).setVisible(false);
+      const w = iconSize + iconGap + t.width;
+      t.destroy();
+      return w;
+    });
+    const total = widths.reduce((a, b) => a + b, 0) + itemGap * (items.length - 1);
+    let x = cx - total / 2;
+
+    items.forEach((it, i) => {
+      this.add.rectangle(x + iconSize / 2, y, iconSize, iconSize, 0xffffff, 0.95)
+        .setStrokeStyle(2, it.color);
+      this.add.circle(x + iconSize / 2, y, iconSize * 0.28, it.color);
+      this.add.text(x + iconSize + iconGap, y, it.label, {
+        fontSize: `${fontSize}px`, color: "#cccccc",
+      }).setOrigin(0, 0.5);
+      x += widths[i] + itemGap;
     });
   }
 

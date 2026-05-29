@@ -237,24 +237,34 @@ export class BombermanRoom extends Room<BombermanState> {
   private movePlayer(p: BPlayer, sid: string, dt: number) {
     if (!p.alive) return;
     const ts = this.state.tileSize;
+    const inp = this.inputs.get(sid);
+    const hasInput = !!(inp && (inp.up || inp.down || inp.left || inp.right));
     let mv = this.moves.get(sid) ?? null;
 
+    // 入力が無ければ最寄りのセル中心へスナップして即停止（ビタ止め）
+    if (!hasInput) {
+      const nearCol = Math.round((p.x - ts / 2) / ts);
+      const nearRow = Math.round((p.y - ts / 2) / ts);
+      p.col = nearCol; p.row = nearRow;
+      p.x = nearCol * ts + ts / 2;
+      p.y = nearRow * ts + ts / 2;
+      this.moves.set(sid, null);
+      return;
+    }
+
     // 移動中でなければ入力から目標セルを決める
-    if (!mv) {
-      const inp = this.inputs.get(sid);
-      if (inp) {
-        let dc = 0, dr = 0, dir = p.dir;
-        if (inp.up) { dr = -1; dir = 3; }
-        else if (inp.down) { dr = 1; dir = 0; }
-        else if (inp.left) { dc = -1; dir = 1; }
-        else if (inp.right) { dc = 1; dir = 2; }
-        if (dc !== 0 || dr !== 0) {
-          const ncol = p.col + dc, nrow = p.row + dr;
-          p.dir = dir;
-          if (this.isPassable(ncol, nrow)) {
-            mv = { targetCol: ncol, targetRow: nrow };
-            this.moves.set(sid, mv);
-          }
+    if (!mv && inp) {
+      let dc = 0, dr = 0, dir = p.dir;
+      if (inp.up) { dr = -1; dir = 3; }
+      else if (inp.down) { dr = 1; dir = 0; }
+      else if (inp.left) { dc = -1; dir = 1; }
+      else if (inp.right) { dc = 1; dir = 2; }
+      if (dc !== 0 || dr !== 0) {
+        const ncol = p.col + dc, nrow = p.row + dr;
+        p.dir = dir;
+        if (this.isPassable(ncol, nrow)) {
+          mv = { targetCol: ncol, targetRow: nrow };
+          this.moves.set(sid, mv);
         }
       }
     }
